@@ -40,7 +40,7 @@ class PlaceCreate(BaseModel):
     category: PlaceCategory
     price_min: int = 0
     price_max: int = 0
-    gmaps_url: Optional[str] = None
+    gmaps_url: str
     city: str
     source_type: SourceType = SourceType.manual
     source_url: Optional[str] = None
@@ -57,7 +57,7 @@ class PlaceOut(BaseModel):
     category: PlaceCategory
     price_min: int
     price_max: int
-    gmaps_url: Optional[str]
+    gmaps_url: str
     city: str
     source_type: SourceType
     source_url: Optional[str]
@@ -86,6 +86,7 @@ class ImportPreviewItem(BaseModel):
     price_min: int
     price_max: int
     city: str
+    gmaps_url: str  # link PENCARIAN Google Maps auto-generate dari nama+kota -- WAJIB dicek/diganti user sebelum publish
     confidence: str  # "high" atau "low" -- dipakai frontend untuk kasih peringatan ke user
     warning: Optional[str] = None
 
@@ -112,7 +113,7 @@ class ImportBulkPlaceItem(BaseModel):
     category: PlaceCategory
     price_min: int = 0
     price_max: int = 0
-    gmaps_url: Optional[str] = None
+    gmaps_url: str
     city: str
     photo_url: Optional[str] = None
     opening_hours: Optional[str] = None

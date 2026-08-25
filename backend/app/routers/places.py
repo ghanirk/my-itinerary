@@ -22,6 +22,7 @@ from app.services.social_extractor import (
     fetch_oembed_metadata,
     fetch_page_description,
     build_raw_text_for_ai,
+    build_gmaps_search_url,
     DetectedPlatform,
     ExtractionError,
 )
@@ -75,14 +76,17 @@ def create_place(
     db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
+    # gmaps_url wajib diisi (baik dari form manual maupun hasil koreksi user atas draft AI)
+    if not payload.gmaps_url or not payload.gmaps_url.strip():
+        raise HTTPException(status_code=422, detail="Link Google Maps wajib diisi.")
+
     # Deduplication sederhana: cek gmaps_url yang sama persis sebelum simpan
-    if payload.gmaps_url:
-        dup = db.query(Place).filter(Place.gmaps_url == payload.gmaps_url).first()
-        if dup:
-            raise HTTPException(
-                status_code=409,
-                detail=f"Tempat dengan link Google Maps ini sudah ada: '{dup.name}'.",
-            )
+    dup = db.query(Place).filter(Place.gmaps_url == payload.gmaps_url).first()
+    if dup:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Tempat dengan link Google Maps ini sudah ada: '{dup.name}'.",
+        )
 
     place = Place(**payload.model_dump(), created_by=current_user.id)
     db.add(place)
@@ -149,6 +153,7 @@ def import_preview(
                 price_min=extracted["price_min"],
                 price_max=extracted["price_max"],
                 city=extracted["city"],
+                gmaps_url=build_gmaps_search_url(extracted["name"], extracted["city"]),
                 confidence=extracted["confidence"],
                 warning=warning,
             )
@@ -185,18 +190,28 @@ def import_bulk(
     skipped_count = 0
 
     for item in payload.items:
-        if item.gmaps_url:
-            dup = db.query(Place).filter(Place.gmaps_url == item.gmaps_url).first()
-            if dup:
-                results.append(
-                    ImportBulkResultItem(
-                        name=item.name,
-                        status="duplicate",
-                        detail=f"Tempat dengan link Google Maps ini sudah ada: '{dup.name}'.",
-                    )
+        if not item.gmaps_url or not item.gmaps_url.strip():
+            results.append(
+                ImportBulkResultItem(
+                    name=item.name,
+                    status="error",
+                    detail="Link Google Maps wajib diisi sebelum disimpan.",
                 )
-                skipped_count += 1
-                continue
+            )
+            skipped_count += 1
+            continue
+
+        dup = db.query(Place).filter(Place.gmaps_url == item.gmaps_url).first()
+        if dup:
+            results.append(
+                ImportBulkResultItem(
+                    name=item.name,
+                    status="duplicate",
+                    detail=f"Tempat dengan link Google Maps ini sudah ada: '{dup.name}'.",
+                )
+            )
+            skipped_count += 1
+            continue
 
         try:
             place = Place(

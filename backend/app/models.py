@@ -60,7 +60,7 @@ class Place(Base):
     category = Column(Enum(PlaceCategory), nullable=False)
     price_min = Column(Integer, nullable=False, default=0)
     price_max = Column(Integer, nullable=False, default=0)
-    gmaps_url = Column(String(500), nullable=True)
+    gmaps_url = Column(String(500), nullable=False)
     city = Column(String(120), nullable=False, index=True)
     source_type = Column(Enum(SourceType), default=SourceType.manual, nullable=False)
     source_url = Column(String(500), nullable=True)

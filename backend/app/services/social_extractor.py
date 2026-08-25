@@ -121,6 +121,19 @@ def fetch_page_description(url: str) -> Optional[str]:
     return None
 
 
+def build_gmaps_search_url(name: str, city: str) -> str:
+    """
+    Bikin link pencarian Google Maps dari nama tempat + kota. TIDAK menjamin hasilnya
+    persis satu tempat yang benar (ini link *pencarian*, bukan link *tempat* spesifik) --
+    karena AI tidak browsing internet sungguhan, kita sengaja tidak menyuruh AI mengarang
+    link Google Maps langsung (risiko link palsu/mati yang kelihatan valid). User WAJIB
+    membuka & memverifikasi/mengganti link ini dengan link tempat yang benar sebelum
+    publish, sesuai alur draft/preview.
+    """
+    query = f"{name}, {city}".strip(", ")
+    return f"https://www.google.com/maps/search/?api=1&query={quote(query)}"
+
+
 def build_raw_text_for_ai(metadata: dict, description: Optional[str] = None) -> str:
     """Gabungkan field metadata jadi satu teks yang siap dikirim ke AI untuk diparse."""
     parts = []
