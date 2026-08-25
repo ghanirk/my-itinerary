@@ -75,6 +75,21 @@ class Place(Base):
     reports = relationship("PlaceReport", back_populates="place")
 
 
+class ImportLog(Base):
+    """
+    Satu baris = satu kali user berhasil memanggil AI lewat /places/import/preview.
+    Dipakai buat rate limiting (kuota harian) supaya endpoint yang manggil Gemini
+    ini gak bisa di-spam -- disimpan di DB (bukan counter in-memory) supaya tetap
+    akurat walau server restart atau jalan di lebih dari satu worker/instance.
+    """
+    __tablename__ = "import_logs"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False, index=True)
+    source_url = Column(String(500), nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow, index=True)
+
+
 class PlaceReport(Base):
     __tablename__ = "place_reports"
 

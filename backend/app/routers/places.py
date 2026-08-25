@@ -1,13 +1,16 @@
+from datetime import datetime, timedelta
 from typing import Optional, List
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
+from app.config import settings
 from app.database import get_db
-from app.models import Place, PlaceReport, User, PlaceCategory, PlaceStatus, SourceType
+from app.models import Place, PlaceReport, ImportLog, User, PlaceCategory, PlaceStatus, SourceType
 from app.schemas import (
     PlaceCreate,
     PlaceOut,
+    PlaceListResponse,
     PlaceReportCreate,
     ImportUrlRequest,
     ImportPreviewResponse,
@@ -36,17 +39,26 @@ _PLATFORM_TO_SOURCE = {
 }
 
 
-@router.get("", response_model=List[PlaceOut])
+@router.get("", response_model=PlaceListResponse)
 def list_places(
     city: Optional[str] = None,
     category: Optional[PlaceCategory] = None,
     budget_min: Optional[int] = Query(None, ge=0),
     budget_max: Optional[int] = Query(None, ge=0),
+    q_search: Optional[str] = Query(None, alias="q", description="Cari berdasarkan nama tempat"),
+    limit: int = Query(20, ge=1, le=100, description="Jumlah item per halaman, maksimal 100"),
+    offset: int = Query(0, ge=0, description="Jumlah item yang dilewati (untuk halaman berikutnya)"),
     db: Session = Depends(get_db),
 ):
     """
-    Filter tempat: by kota, kategori, dan rentang budget.
+    Filter tempat: by kota, kategori, rentang budget, dan pencarian nama (opsional).
     Sesuai dokumen: tempat cocok jika rentang harganya overlap dengan budget user.
+
+    Hasil di-paginate (default 20 item/halaman) supaya endpoint ini tetap ringan
+    walau jumlah places sudah banyak -- pakai `limit`/`offset` untuk "load more"
+    atau nomor halaman di sisi frontend. `total` di response = jumlah total item
+    yang cocok dengan filter (sebelum pagination), dipakai frontend untuk hitung
+    ada berapa halaman / apakah masih ada data selanjutnya.
     """
     q = db.query(Place).filter(Place.status == PlaceStatus.published)
 
@@ -58,8 +70,18 @@ def list_places(
         q = q.filter(Place.price_max >= budget_min)
     if budget_max is not None:
         q = q.filter(Place.price_min <= budget_max)
+    if q_search:
+        q = q.filter(Place.name.ilike(f"%{q_search}%"))
 
-    return q.order_by(Place.created_at.desc()).all()
+    total = q.count()
+    items = (
+        q.order_by(Place.created_at.desc())
+        .offset(offset)
+        .limit(limit)
+        .all()
+    )
+
+    return PlaceListResponse(items=items, total=total, limit=limit, offset=offset)
 
 
 @router.get("/{place_id}", response_model=PlaceOut)
@@ -98,6 +120,7 @@ def create_place(
 @router.post("/import/preview", response_model=ImportPreviewResponse)
 def import_preview(
     payload: ImportUrlRequest,
+    db: Session = Depends(get_db),
     current_user: User = Depends(get_current_user),
 ):
     """
@@ -112,7 +135,27 @@ def import_preview(
     untuk publish sekaligus. Instagram & Twitter/X sengaja belum didukung (butuh akses
     developer app pihak ketiga yang lebih rumit & kurang stabil) -- untuk itu user
     pakai form manual.
+
+    Rate limited per user (lihat settings.MAX_IMPORTS_PER_DAY) karena tiap panggilan
+    endpoint ini memanggil Gemini API -- tanpa limit, satu user bisa menghabiskan
+    quota/cost AI untuk semua orang.
     """
+    if settings.MAX_IMPORTS_PER_DAY > 0:
+        since = datetime.utcnow() - timedelta(hours=24)
+        usage_count = (
+            db.query(ImportLog)
+            .filter(ImportLog.user_id == current_user.id, ImportLog.created_at >= since)
+            .count()
+        )
+        if usage_count >= settings.MAX_IMPORTS_PER_DAY:
+            raise HTTPException(
+                status_code=429,
+                detail=(
+                    f"Kamu sudah mencapai batas {settings.MAX_IMPORTS_PER_DAY}x import otomatis "
+                    "dalam 24 jam terakhir. Coba lagi nanti, atau isi tempat ini lewat form manual."
+                ),
+            )
+
     platform = detect_platform(payload.url)
 
     if platform == DetectedPlatform.unknown:
@@ -133,6 +176,11 @@ def import_preview(
         extracted_places, used_image_fallback = extract_places(raw_text, metadata.get("thumbnail_url"))
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
+
+    # Baru dicatat sebagai "pemakaian kuota" setelah AI beneran berhasil dipanggil --
+    # kalau gagal duluan (link salah, platform tidak didukung, dll) tidak dihitung.
+    db.add(ImportLog(user_id=current_user.id, source_url=payload.url))
+    db.commit()
 
     items = []
     for extracted in extracted_places:

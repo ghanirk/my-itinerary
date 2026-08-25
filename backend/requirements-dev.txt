@@ -1,0 +1,7 @@
+# Dependency tambahan khusus untuk development/testing -- TIDAK perlu diinstall di
+# production/deploy, cukup untuk yang mau jalanin test suite di lokal.
+#
+# Install dengan: pip install -r requirements.txt -r requirements-dev.txt
+
+pytest==8.3.3
+respx==0.21.1

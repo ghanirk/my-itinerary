@@ -69,6 +69,14 @@ class PlaceOut(BaseModel):
     created_at: datetime
 
 
+class PlaceListResponse(BaseModel):
+    """Response ter-paginasi untuk GET /places."""
+    items: List[PlaceOut]
+    total: int  # total item yang cocok dengan filter (sebelum limit/offset)
+    limit: int
+    offset: int
+
+
 class PlaceReportCreate(BaseModel):
     reason: str
 

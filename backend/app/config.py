@@ -13,5 +13,10 @@ class Settings:
     GEMINI_API_KEY: str = os.getenv("GEMINI_API_KEY", "")
     GEMINI_MODEL: str = os.getenv("GEMINI_MODEL", "gemini-3.6-flash")
 
+    # Batas berapa kali satu user boleh memanggil /places/import/preview (yang manggil
+    # Gemini API) dalam 24 jam terakhir. Mencegah spam yang bisa menghabiskan quota/cost
+    # AI. Set ke 0 untuk menonaktifkan limit (tidak disarankan di production).
+    MAX_IMPORTS_PER_DAY: int = int(os.getenv("MAX_IMPORTS_PER_DAY", "20"))
+
 
 settings = Settings()

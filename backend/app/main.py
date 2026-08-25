@@ -1,12 +1,14 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
-from app.database import Base, engine
 from app.config import settings
 from app.routers import auth, places, plans
 
-# MVP: buat tabel langsung dari model. Untuk produksi nanti, ganti ke Alembic migrations.
-Base.metadata.create_all(bind=engine)
+# Skema database sekarang dikelola lewat Alembic migrations (folder migrations/),
+# bukan lagi Base.metadata.create_all() -- supaya perubahan schema di production
+# (nambah/ubah kolom, dst) bisa di-track & di-apply dengan aman tanpa risiko
+# create_all "lupa" nge-alter tabel yang sudah ada. Jalankan `alembic upgrade head`
+# sebelum start server (lihat README bagian "Menjalankan di lokal").
 
 app = FastAPI(
     title="My Itineraries API",
