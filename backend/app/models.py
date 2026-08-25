@@ -25,8 +25,6 @@ class PlaceCategory(str, enum.Enum):
 class SourceType(str, enum.Enum):
     manual = "manual"
     tiktok = "tiktok"
-    instagram = "instagram"
-    twitter = "twitter"
     youtube = "youtube"
 
 

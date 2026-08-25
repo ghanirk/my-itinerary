@@ -73,6 +73,30 @@ class PlaceReportCreate(BaseModel):
     reason: str
 
 
+# ---------- Import via URL Sosmed ----------
+
+class ImportUrlRequest(BaseModel):
+    url: str
+
+
+class ImportPreviewResponse(BaseModel):
+    """
+    Hasil ekstraksi ditampilkan sebagai draft/preview -- BELUM tersimpan ke database.
+    Frontend menampilkan ini di form yang bisa diedit user, lalu submit ke POST /places
+    (pakai field yang sama, source_type & source_url diisi dari sini) untuk publish.
+    """
+    name: str
+    category: PlaceCategory
+    price_min: int
+    price_max: int
+    city: str
+    source_type: SourceType
+    source_url: str
+    photo_url: Optional[str] = None
+    confidence: str  # "high" atau "low" -- dipakai frontend untuk kasih peringatan ke user
+    warning: Optional[str] = None
+
+
 # ---------- Plans ----------
 
 class PlanItemCreate(BaseModel):

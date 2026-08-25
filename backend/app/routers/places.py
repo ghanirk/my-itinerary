@@ -4,11 +4,18 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.database import get_db
-from app.models import Place, PlaceReport, User, PlaceCategory, PlaceStatus
-from app.schemas import PlaceCreate, PlaceOut, PlaceReportCreate
+from app.models import Place, PlaceReport, User, PlaceCategory, PlaceStatus, SourceType
+from app.schemas import PlaceCreate, PlaceOut, PlaceReportCreate, ImportUrlRequest, ImportPreviewResponse
 from app.auth import get_current_user
+from app.services.social_extractor import detect_platform, fetch_oembed_metadata, build_raw_text_for_ai, DetectedPlatform, ExtractionError
+from app.services.ai_extract import extract_place_from_text
 
 router = APIRouter(prefix="/places", tags=["places"])
+
+_PLATFORM_TO_SOURCE = {
+    DetectedPlatform.youtube: SourceType.youtube,
+    DetectedPlatform.tiktok: SourceType.tiktok,
+}
 
 
 @router.get("", response_model=List[PlaceOut])
@@ -65,6 +72,55 @@ def create_place(
     db.commit()
     db.refresh(place)
     return place
+
+
+@router.post("/import/preview", response_model=ImportPreviewResponse)
+def import_preview(
+    payload: ImportUrlRequest,
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Alur (lihat dokumen produk 8.1):
+    1. User tempel URL TikTok atau YouTube
+    2. Deteksi platform & ambil metadata (oEmbed)
+    3. AI ekstrak jadi field terstruktur
+    4. Kembalikan sebagai draft/preview -- BELUM disimpan ke database bersama.
+
+    User mengedit hasil ini di frontend, baru submit ke POST /places untuk publish.
+    Instagram & Twitter/X sengaja belum didukung (butuh akses developer app pihak
+    ketiga yang lebih rumit & kurang stabil) -- untuk itu user pakai form manual.
+    """
+    platform = detect_platform(payload.url)
+
+    if platform == DetectedPlatform.unknown:
+        raise HTTPException(
+            status_code=400,
+            detail="Link tidak dikenali. Saat ini auto-import hanya mendukung link TikTok atau YouTube.",
+        )
+
+    try:
+        metadata = fetch_oembed_metadata(payload.url, platform)
+        raw_text = build_raw_text_for_ai(metadata)
+        extracted = extract_place_from_text(raw_text)
+    except ExtractionError as e:
+        raise HTTPException(status_code=422, detail=str(e))
+
+    warning = None
+    if extracted["confidence"] == "low":
+        warning = "AI kurang yakin dengan hasil ekstraksi ini -- mohon periksa & lengkapi sebelum disimpan."
+
+    return ImportPreviewResponse(
+        name=extracted["name"],
+        category=extracted["category"],
+        price_min=extracted["price_min"],
+        price_max=extracted["price_max"],
+        city=extracted["city"],
+        source_type=_PLATFORM_TO_SOURCE[platform],
+        source_url=payload.url,
+        photo_url=metadata.get("thumbnail_url"),
+        confidence=extracted["confidence"],
+        warning=warning,
+    )
 
 
 @router.post("/{place_id}/report", status_code=201)
