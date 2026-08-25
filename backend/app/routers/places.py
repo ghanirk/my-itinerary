@@ -25,7 +25,7 @@ from app.services.social_extractor import (
     DetectedPlatform,
     ExtractionError,
 )
-from app.services.ai_extract import extract_places_from_text
+from app.services.ai_extract import extract_places
 
 router = APIRouter(prefix="/places", tags=["places"])
 
@@ -124,14 +124,23 @@ def import_preview(
         # video kompilasi ("5 kuliner hits di ...") bisa terdeteksi & dipecah dengan benar.
         description = fetch_page_description(payload.url)
         raw_text = build_raw_text_for_ai(metadata, description)
-        extracted_places = extract_places_from_text(raw_text)
+        # extract_places mencoba teks dulu; kalau teksnya kosong/nihil DAN ada thumbnail,
+        # otomatis fallback membaca gambar cover video (untuk video screenshot tanpa caption).
+        extracted_places, used_image_fallback = extract_places(raw_text, metadata.get("thumbnail_url"))
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
     items = []
     for extracted in extracted_places:
         warning = None
-        if extracted["confidence"] == "low":
+        if used_image_fallback:
+            warning = (
+                "Tidak ada caption/deskripsi teks di video ini, jadi hasil ini dibaca AI dari "
+                "gambar cover/thumbnail saja. Kalau video ini sebenarnya berisi beberapa tempat "
+                "lain (mis. slideshow screenshot), tempat-tempat itu TIDAK ikut terbaca -- mohon "
+                "tambahkan manual dan periksa hasil ini sebelum disimpan."
+            )
+        elif extracted["confidence"] == "low":
             warning = "AI kurang yakin dengan hasil ekstraksi ini -- mohon periksa & lengkapi sebelum disimpan."
         items.append(
             ImportPreviewItem(
