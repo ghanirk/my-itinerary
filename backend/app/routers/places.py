@@ -5,10 +5,27 @@ from sqlalchemy.orm import Session
 
 from app.database import get_db
 from app.models import Place, PlaceReport, User, PlaceCategory, PlaceStatus, SourceType
-from app.schemas import PlaceCreate, PlaceOut, PlaceReportCreate, ImportUrlRequest, ImportPreviewResponse
+from app.schemas import (
+    PlaceCreate,
+    PlaceOut,
+    PlaceReportCreate,
+    ImportUrlRequest,
+    ImportPreviewResponse,
+    ImportPreviewItem,
+    ImportBulkRequest,
+    ImportBulkResponse,
+    ImportBulkResultItem,
+)
 from app.auth import get_current_user
-from app.services.social_extractor import detect_platform, fetch_oembed_metadata, build_raw_text_for_ai, DetectedPlatform, ExtractionError
-from app.services.ai_extract import extract_place_from_text
+from app.services.social_extractor import (
+    detect_platform,
+    fetch_oembed_metadata,
+    fetch_page_description,
+    build_raw_text_for_ai,
+    DetectedPlatform,
+    ExtractionError,
+)
+from app.services.ai_extract import extract_places_from_text
 
 router = APIRouter(prefix="/places", tags=["places"])
 
@@ -82,13 +99,15 @@ def import_preview(
     """
     Alur (lihat dokumen produk 8.1):
     1. User tempel URL TikTok atau YouTube
-    2. Deteksi platform & ambil metadata (oEmbed)
-    3. AI ekstrak jadi field terstruktur
-    4. Kembalikan sebagai draft/preview -- BELUM disimpan ke database bersama.
+    2. Deteksi platform & ambil metadata (oEmbed) + deskripsi lengkap halaman
+    3. AI ekstrak jadi satu atau LEBIH tempat terstruktur (video kompilasi ->
+       banyak tempat sekaligus, video biasa -> tetap 1 tempat)
+    4. Kembalikan semuanya sebagai draft/preview -- BELUM disimpan ke database bersama.
 
-    User mengedit hasil ini di frontend, baru submit ke POST /places untuk publish.
-    Instagram & Twitter/X sengaja belum didukung (butuh akses developer app pihak
-    ketiga yang lebih rumit & kurang stabil) -- untuk itu user pakai form manual.
+    User mengedit tiap hasil ini di frontend, baru submit ke POST /places/import/bulk
+    untuk publish sekaligus. Instagram & Twitter/X sengaja belum didukung (butuh akses
+    developer app pihak ketiga yang lebih rumit & kurang stabil) -- untuk itu user
+    pakai form manual.
     """
     platform = detect_platform(payload.url)
 
@@ -100,27 +119,103 @@ def import_preview(
 
     try:
         metadata = fetch_oembed_metadata(payload.url, platform)
-        raw_text = build_raw_text_for_ai(metadata)
-        extracted = extract_place_from_text(raw_text)
+        # Best-effort: deskripsi lengkap halaman (kalau berhasil diambil) memberi AI
+        # jauh lebih banyak konteks dibanding title oEmbed saja -- ini kunci supaya
+        # video kompilasi ("5 kuliner hits di ...") bisa terdeteksi & dipecah dengan benar.
+        description = fetch_page_description(payload.url)
+        raw_text = build_raw_text_for_ai(metadata, description)
+        extracted_places = extract_places_from_text(raw_text)
     except ExtractionError as e:
         raise HTTPException(status_code=422, detail=str(e))
 
-    warning = None
-    if extracted["confidence"] == "low":
-        warning = "AI kurang yakin dengan hasil ekstraksi ini -- mohon periksa & lengkapi sebelum disimpan."
+    items = []
+    for extracted in extracted_places:
+        warning = None
+        if extracted["confidence"] == "low":
+            warning = "AI kurang yakin dengan hasil ekstraksi ini -- mohon periksa & lengkapi sebelum disimpan."
+        items.append(
+            ImportPreviewItem(
+                name=extracted["name"],
+                category=extracted["category"],
+                price_min=extracted["price_min"],
+                price_max=extracted["price_max"],
+                city=extracted["city"],
+                confidence=extracted["confidence"],
+                warning=warning,
+            )
+        )
 
     return ImportPreviewResponse(
-        name=extracted["name"],
-        category=extracted["category"],
-        price_min=extracted["price_min"],
-        price_max=extracted["price_max"],
-        city=extracted["city"],
+        is_compilation=len(items) > 1,
         source_type=_PLATFORM_TO_SOURCE[platform],
         source_url=payload.url,
         photo_url=metadata.get("thumbnail_url"),
-        confidence=extracted["confidence"],
-        warning=warning,
+        items=items,
     )
+
+
+@router.post("/import/bulk", response_model=ImportBulkResponse, status_code=201)
+def import_bulk(
+    payload: ImportBulkRequest,
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Simpan satu atau banyak tempat sekaligus hasil koreksi user dari /import/preview
+    (dipakai terutama untuk video kompilasi yang menghasilkan >1 tempat).
+
+    Tiap item diproses independen -- kalau satu item duplikat/gagal, item lain tetap
+    lanjut tersimpan. Hasil per item dikembalikan supaya frontend bisa menampilkan
+    status masing-masing (mis. "4 tersimpan, 1 duplikat").
+    """
+    if not payload.items:
+        raise HTTPException(status_code=400, detail="Tidak ada tempat untuk disimpan.")
+
+    results = []
+    created_count = 0
+    skipped_count = 0
+
+    for item in payload.items:
+        if item.gmaps_url:
+            dup = db.query(Place).filter(Place.gmaps_url == item.gmaps_url).first()
+            if dup:
+                results.append(
+                    ImportBulkResultItem(
+                        name=item.name,
+                        status="duplicate",
+                        detail=f"Tempat dengan link Google Maps ini sudah ada: '{dup.name}'.",
+                    )
+                )
+                skipped_count += 1
+                continue
+
+        try:
+            place = Place(
+                name=item.name,
+                category=item.category,
+                price_min=item.price_min,
+                price_max=item.price_max,
+                gmaps_url=item.gmaps_url,
+                city=item.city,
+                source_type=payload.source_type,
+                source_url=payload.source_url,
+                photo_url=item.photo_url,
+                opening_hours=item.opening_hours,
+                notes=item.notes,
+                status=PlaceStatus.published,
+                created_by=current_user.id,
+            )
+            db.add(place)
+            db.commit()
+            db.refresh(place)
+            results.append(ImportBulkResultItem(name=item.name, status="created", place=place))
+            created_count += 1
+        except Exception as e:
+            db.rollback()
+            results.append(ImportBulkResultItem(name=item.name, status="error", detail=str(e)))
+            skipped_count += 1
+
+    return ImportBulkResponse(results=results, created_count=created_count, skipped_count=skipped_count)
 
 
 @router.post("/{place_id}/report", status_code=201)

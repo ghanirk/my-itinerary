@@ -1,3 +1,4 @@
+import html
 import re
 from enum import Enum
 from typing import Optional
@@ -71,11 +72,62 @@ def fetch_oembed_metadata(url: str, platform: DetectedPlatform) -> dict:
     }
 
 
-def build_raw_text_for_ai(metadata: dict) -> str:
+_META_DESCRIPTION_PATTERNS = [
+    # og:description biasanya paling lengkap (caption penuh / deskripsi video,
+    # termasuk daftar tempat + timestamp kalau video kompilasi)
+    re.compile(r'<meta[^>]+property=["\']og:description["\'][^>]+content=["\'](.*?)["\']', re.IGNORECASE | re.DOTALL),
+    re.compile(r'<meta[^>]+content=["\'](.*?)["\'][^>]+property=["\']og:description["\']', re.IGNORECASE | re.DOTALL),
+    re.compile(r'<meta[^>]+name=["\']description["\'][^>]+content=["\'](.*?)["\']', re.IGNORECASE | re.DOTALL),
+]
+
+_BROWSER_HEADERS = {
+    # Beberapa platform (terutama TikTok) menolak/mengembalikan HTML kosong untuk
+    # request tanpa User-Agent yang wajar.
+    "User-Agent": (
+        "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+        "(KHTML, like Gecko) Chrome/124.0.0.0 Safari/537.36"
+    ),
+    "Accept-Language": "id-ID,id;q=0.9,en-US;q=0.8,en;q=0.7",
+}
+
+
+def fetch_page_description(url: str) -> Optional[str]:
+    """
+    Ambil og:description (atau meta description) langsung dari halaman video.
+    Ini best-effort: kalau gagal (diblokir, timeout, struktur halaman berubah, dll)
+    kita tidak boleh menggagalkan seluruh alur import -- cukup kembalikan None dan
+    AI akan bekerja dengan teks yang lebih terbatas dari oEmbed saja.
+
+    Untuk video kompilasi (misal "5 kuliner hits di Bandung", "10 spot healing Jogja"),
+    daftar tempatnya biasanya ada di deskripsi lengkap ini, bukan di title oEmbed yang
+    sering terpotong pendek -- jadi field ini penting supaya AI bisa mendeteksi &
+    mengekstrak semua tempat, bukan cuma satu.
+    """
+    try:
+        with httpx.Client(timeout=8.0, follow_redirects=True, headers=_BROWSER_HEADERS) as client:
+            resp = client.get(url)
+            if resp.status_code >= 400:
+                return None
+            body = resp.text
+    except httpx.HTTPError:
+        return None
+
+    for pattern in _META_DESCRIPTION_PATTERNS:
+        match = pattern.search(body)
+        if match:
+            description = html.unescape(match.group(1)).strip()
+            if description:
+                return description
+    return None
+
+
+def build_raw_text_for_ai(metadata: dict, description: Optional[str] = None) -> str:
     """Gabungkan field metadata jadi satu teks yang siap dikirim ke AI untuk diparse."""
     parts = []
     if metadata.get("title"):
-        parts.append(f"Judul/caption: {metadata['title']}")
+        parts.append(f"Judul/caption (oEmbed): {metadata['title']}")
+    if description and description.strip() and description.strip() != (metadata.get("title") or "").strip():
+        parts.append(f"Deskripsi lengkap video: {description.strip()}")
     if metadata.get("author_name"):
         parts.append(f"Akun: {metadata['author_name']}")
     return "\n".join(parts) if parts else ""

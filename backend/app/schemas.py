@@ -79,22 +79,63 @@ class ImportUrlRequest(BaseModel):
     url: str
 
 
-class ImportPreviewResponse(BaseModel):
-    """
-    Hasil ekstraksi ditampilkan sebagai draft/preview -- BELUM tersimpan ke database.
-    Frontend menampilkan ini di form yang bisa diedit user, lalu submit ke POST /places
-    (pakai field yang sama, source_type & source_url diisi dari sini) untuk publish.
-    """
+class ImportPreviewItem(BaseModel):
+    """Satu tempat hasil ekstraksi -- video biasa akan punya 1 item, video kompilasi bisa lebih."""
     name: str
     category: PlaceCategory
     price_min: int
     price_max: int
     city: str
+    confidence: str  # "high" atau "low" -- dipakai frontend untuk kasih peringatan ke user
+    warning: Optional[str] = None
+
+
+class ImportPreviewResponse(BaseModel):
+    """
+    Hasil ekstraksi ditampilkan sebagai draft/preview -- BELUM tersimpan ke database.
+    `items` berisi satu tempat untuk video biasa, atau beberapa tempat sekaligus kalau
+    video terdeteksi sebagai kompilasi (mis. "5 kuliner hits di Bandung").
+    Frontend menampilkan tiap item di form yang bisa diedit user satu-satu, lalu submit
+    ke POST /places/import/bulk (source_type & source_url sama untuk semua item, diambil
+    dari sini) untuk publish semuanya sekaligus.
+    """
+    is_compilation: bool
     source_type: SourceType
     source_url: str
     photo_url: Optional[str] = None
-    confidence: str  # "high" atau "low" -- dipakai frontend untuk kasih peringatan ke user
-    warning: Optional[str] = None
+    items: List[ImportPreviewItem]
+
+
+class ImportBulkPlaceItem(BaseModel):
+    """Satu tempat yang sudah dikoreksi user di form preview, siap dipublish."""
+    name: str
+    category: PlaceCategory
+    price_min: int = 0
+    price_max: int = 0
+    gmaps_url: Optional[str] = None
+    city: str
+    photo_url: Optional[str] = None
+    opening_hours: Optional[str] = None
+    notes: Optional[str] = None
+
+
+class ImportBulkRequest(BaseModel):
+    source_type: SourceType
+    source_url: str
+    items: List[ImportBulkPlaceItem]
+
+
+class ImportBulkResultItem(BaseModel):
+    name: str
+    status: str  # "created" | "duplicate" | "error"
+    place: Optional[PlaceOut] = None
+    detail: Optional[str] = None
+
+
+class ImportBulkResponse(BaseModel):
+    results: List[ImportBulkResultItem]
+    created_count: int
+    skipped_count: int
 
 
 # ---------- Plans ----------
