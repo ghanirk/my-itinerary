@@ -2,8 +2,7 @@ import html
 import re
 from enum import Enum
 from typing import Optional
-from urllib.parse import quote
-
+from urllib.parse import quote, urlparse
 import httpx
 
 
@@ -13,14 +12,14 @@ class DetectedPlatform(str, Enum):
     unknown = "unknown"
 
 
-_PATTERNS = {
-    DetectedPlatform.youtube: re.compile(r"(youtube\.com|youtu\.be)", re.IGNORECASE),
-    DetectedPlatform.tiktok: re.compile(r"tiktok\.com", re.IGNORECASE),
-}
-
 _OEMBED_ENDPOINTS = {
     DetectedPlatform.youtube: "https://www.youtube.com/oembed?url={url}&format=json",
     DetectedPlatform.tiktok: "https://www.tiktok.com/oembed?url={url}",
+}
+
+_ALLOWED_HOSTS = {
+    DetectedPlatform.youtube: ("youtube.com", "youtu.be"),
+    DetectedPlatform.tiktok: ("tiktok.com",),
 }
 
 
@@ -29,9 +28,24 @@ class ExtractionError(Exception):
 
 
 def detect_platform(url: str) -> DetectedPlatform:
-    for platform, pattern in _PATTERNS.items():
-        if pattern.search(url):
-            return platform
+    try:
+        parsed = urlparse(url)
+    except ValueError:
+        return DetectedPlatform.unknown
+
+    # Batasi skema ke http/https saja -- cegah trik semacam file://, data://, dst.
+    if parsed.scheme not in ("http", "https"):
+        return DetectedPlatform.unknown
+
+    hostname = (parsed.hostname or "").lower()
+    if not hostname:
+        return DetectedPlatform.unknown
+
+    for platform, allowed_hosts in _ALLOWED_HOSTS.items():
+        for host in allowed_hosts:
+            if hostname == host or hostname.endswith("." + host):
+                return platform
+
     return DetectedPlatform.unknown
 
 
