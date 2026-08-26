@@ -3,7 +3,8 @@ from typing import Optional, List
 
 from pydantic import BaseModel, EmailStr, ConfigDict, Field
 
-from app.models import PlaceCategory, SourceType, PlaceStatus, PlanType
+from app.models import PlaceCategory, SourceType, PlaceStatus, PlanType, TransportMode, TripStatus, MemberRole
+
 
 
 # ---------- Auth / Users ----------
@@ -100,14 +101,6 @@ class ImportPreviewItem(BaseModel):
 
 
 class ImportPreviewResponse(BaseModel):
-    """
-    Hasil ekstraksi ditampilkan sebagai draft/preview -- BELUM tersimpan ke database.
-    `items` berisi satu tempat untuk video biasa, atau beberapa tempat sekaligus kalau
-    video terdeteksi sebagai kompilasi (mis. "5 kuliner hits di Bandung").
-    Frontend menampilkan tiap item di form yang bisa diedit user satu-satu, lalu submit
-    ke POST /places/import/bulk (source_type & source_url sama untuk semua item, diambil
-    dari sini) untuk publish semuanya sekaligus.
-    """
     is_compilation: bool
     source_type: SourceType
     source_url: str
@@ -116,7 +109,6 @@ class ImportPreviewResponse(BaseModel):
 
 
 class ImportBulkPlaceItem(BaseModel):
-    """Satu tempat yang sudah dikoreksi user di form preview, siap dipublish."""
     name: str
     category: PlaceCategory
     price_min: int = 0
@@ -184,3 +176,151 @@ class GeneratePlanRequest(BaseModel):
     city: str
     jumlah_tempat: int
     categories: Optional[List[PlaceCategory]] = None
+
+
+
+# --- Trip ---
+class TripMemberBase(BaseModel):
+    user_id: Optional[str] = None  # UUID string
+    name: str
+    origin_city: str
+    role: MemberRole = MemberRole.member
+
+class TripMemberCreate(TripMemberBase):
+    pass
+
+class TripMemberOut(TripMemberBase):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    created_at: datetime
+
+class TripTransportCreate(BaseModel):
+    price: float
+
+class TripTransportOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    member_id: str
+    price: float
+    created_at: datetime
+
+class TripVehicleGroupCreate(BaseModel):
+    vehicle_label: str
+    member_ids: List[str]  # UUID dari trip_members
+
+class TripVehicleGroupOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    vehicle_label: str
+    member_ids: List[str]  # kita akan isi dari relasi
+
+class TripHotelCreate(BaseModel):
+    place_id: str
+    nights: int
+    price_per_night: float
+    capacity_per_room: int
+
+class TripHotelOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    place_id: str
+    nights: int
+    price_per_night: float
+    capacity_per_room: int
+    place: PlaceOut  # kita reuse PlaceOut
+
+class TripActivityCreate(BaseModel):
+    place_id: str
+    day_index: int
+
+class TripActivityOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    place_id: str
+    day_index: int
+    place: PlaceOut
+
+class TripCreate(BaseModel):
+    name: str
+    destination_city: str
+    duration_days: int
+    departure_month_target: datetime  # tanggal target
+    transport_mode: TransportMode
+
+class TripUpdate(BaseModel):
+    name: Optional[str] = None
+    destination_city: Optional[str] = None
+    duration_days: Optional[int] = None
+    departure_month_target: Optional[datetime] = None
+    transport_mode: Optional[TransportMode] = None
+    status: Optional[TripStatus] = None
+
+class TripOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    owner_id: str
+    name: str
+    destination_city: str
+    duration_days: int
+    departure_month_target: datetime
+    transport_mode: TransportMode
+    status: TripStatus
+    created_at: datetime
+    updated_at: datetime
+    members: Optional[List[TripMemberOut]] = None
+    hotels: Optional[List[TripHotelOut]] = None
+    activities: Optional[List[TripActivityOut]] = None
+    # kita bisa tambahkan budget_summary, installments jika diperlukan
+
+# --- Budget & Installment ---
+class TripBudgetSummaryOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    total_cost: float
+    cost_per_member: float
+    details: Optional[str] = None
+    calculated_at: datetime
+
+class TripInstallmentOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    trip_id: str
+    member_id: str
+    month_index: int
+    amount_due: float
+    amount_paid: float
+    paid_at: Optional[datetime] = None
+    created_at: datetime
+
+class TripInstallmentPay(BaseModel):
+    amount_paid: float
+
+class TripInstallmentAdjust(BaseModel):
+    new_months: int  # jumlah bulan baru
+
+# --- Price Reference (Admin) ---
+class PriceReferenceCreate(BaseModel):
+    mode: TransportMode
+    origin_city: str
+    destination_city: str
+    estimated_price: float
+
+class PriceReferenceUpdate(BaseModel):
+    estimated_price: Optional[float] = None
+
+class PriceReferenceOut(BaseModel):
+    model_config = ConfigDict(from_attributes=True)
+    id: str
+    mode: TransportMode
+    origin_city: str
+    destination_city: str
+    estimated_price: float
+    updated_at: datetime
+
+

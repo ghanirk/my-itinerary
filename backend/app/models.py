@@ -14,6 +14,20 @@ from app.database import Base
 def gen_uuid():
     return str(uuid.uuid4())
 
+class TransportMode(str, enum.Enum):
+    kereta = "kereta"
+    mobil_pribadi = "mobil_pribadi"
+    pesawat = "pesawat"
+    travel = "travel"
+    bis = "bis"
+
+class TripStatus(str, enum.Enum):
+    draft = "draft"
+    confirmed = "confirmed"
+
+class MemberRole(str, enum.Enum):
+    member = "member"
+    admin = "admin"
 
 class PlaceCategory(str, enum.Enum):
     kuliner = "kuliner"
@@ -50,6 +64,9 @@ class User(Base):
 
     places = relationship("Place", back_populates="creator")
     plans = relationship("Plan", back_populates="user")
+    is_admin = Column(Boolean, default=False, nullable=False)
+    owned_trips = relationship("Trip", foreign_keys="Trip.owner_id", back_populates="owner")
+    trip_memberships = relationship("TripMember", foreign_keys="TripMember.user_id", back_populates="user")
 
 
 class Place(Base):
@@ -126,3 +143,150 @@ class PlanItem(Base):
 
     plan = relationship("Plan", back_populates="items")
     place = relationship("Place")
+
+
+# ==================== TIER 2 - PREMIUM TRIP ====================
+
+class Trip(Base):
+    __tablename__ = "trips"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    owner_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=False)
+    name = Column(String(255), nullable=False)
+    destination_city = Column(String(255), nullable=False)
+    duration_days = Column(Integer, nullable=False)
+    departure_month_target = Column(DateTime, nullable=False)  # tetap datetime
+    transport_mode = Column(Enum(TransportMode), nullable=False)
+    status = Column(Enum(TripStatus), default=TripStatus.draft, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)
+
+    # Relasi
+    owner = relationship("User", foreign_keys=[owner_id], back_populates="owned_trips")
+    members = relationship("TripMember", back_populates="trip", cascade="all, delete-orphan")
+    vehicle_groups = relationship("TripVehicleGroup", back_populates="trip", cascade="all, delete-orphan")
+    hotels = relationship("TripHotel", back_populates="trip", cascade="all, delete-orphan")
+    activities = relationship("TripActivity", back_populates="trip", cascade="all, delete-orphan")
+    budgets = relationship("TripBudgetSummary", back_populates="trip", cascade="all, delete-orphan")
+    installments = relationship("TripInstallment", back_populates="trip", cascade="all, delete-orphan")
+    transport_items = relationship("TripTransport", back_populates="trip", cascade="all, delete-orphan")
+
+
+class TripMember(Base):
+    __tablename__ = "trip_members"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    user_id = Column(UUID(as_uuid=False), ForeignKey("users.id"), nullable=True)
+    name = Column(String(255), nullable=False)  # selalu diisi
+    origin_city = Column(String(255), nullable=False)
+    role = Column(Enum(MemberRole), default=MemberRole.member, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="members")
+    user = relationship("User", foreign_keys=[user_id], back_populates="trip_memberships")
+    vehicle_memberships = relationship("TripVehicleMember", back_populates="member", cascade="all, delete-orphan")
+    installments = relationship("TripInstallment", back_populates="member", cascade="all, delete-orphan")
+    transport = relationship("TripTransport", back_populates="member", cascade="all, delete-orphan")
+
+class TripVehicleGroup(Base):
+    __tablename__ = "trip_vehicle_groups"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    vehicle_label = Column(String(255), nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="vehicle_groups")
+    members = relationship("TripVehicleMember", back_populates="group", cascade="all, delete-orphan")
+
+
+class TripVehicleMember(Base):
+    __tablename__ = "trip_vehicle_members"
+
+    group_id = Column(UUID(as_uuid=False), ForeignKey("trip_vehicle_groups.id"), primary_key=True)
+    member_id = Column(UUID(as_uuid=False), ForeignKey("trip_members.id"), primary_key=True)
+
+    group = relationship("TripVehicleGroup", back_populates="members")
+    member = relationship("TripMember", back_populates="vehicle_memberships")
+
+
+class TripHotel(Base):
+    __tablename__ = "trip_hotels"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    place_id = Column(UUID(as_uuid=False), ForeignKey("places.id"), nullable=False)
+    nights = Column(Integer, nullable=False)
+    price_per_night = Column(Float, nullable=False)  # pakai Float atau Numeric
+    capacity_per_room = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="hotels")
+    place = relationship("Place")  # asumsi Place sudah ada
+
+
+class TripActivity(Base):
+    __tablename__ = "trip_activities"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    place_id = Column(UUID(as_uuid=False), ForeignKey("places.id"), nullable=False)
+    day_index = Column(Integer, nullable=False)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="activities")
+    place = relationship("Place")
+
+
+class TripBudgetSummary(Base):
+    __tablename__ = "trip_budget_summary"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    total_cost = Column(Float, nullable=False)
+    cost_per_member = Column(Float, nullable=False)
+    details = Column(Text, nullable=True)  # bisa JSON string atau JSONB, kita pakai Text dulu
+    calculated_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="budgets")
+
+
+class TripInstallment(Base):
+    __tablename__ = "trip_installments"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    member_id = Column(UUID(as_uuid=False), ForeignKey("trip_members.id"), nullable=False)
+    month_index = Column(Integer, nullable=False)
+    amount_due = Column(Float, nullable=False)
+    amount_paid = Column(Float, default=0.0)
+    paid_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    trip = relationship("Trip", back_populates="installments")
+    member = relationship("TripMember", back_populates="installments")
+
+class TripTransport(Base):
+    __tablename__ = "trip_transport"
+
+    # Tetap pakai UUID biar konsisten dengan tabel lain
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    member_id = Column(UUID(as_uuid=False), ForeignKey("trip_members.id"), nullable=False)
+    price = Column(Float, nullable=False)  # atau Numeric(14,2) kalau mau presisi
+    created_at = Column(DateTime, default=datetime.utcnow)
+
+    # Relasi opsional (tapi sangat membantu kalau nanti mau ambil data)
+    trip = relationship("Trip", back_populates="transport_items")
+    member = relationship("TripMember", back_populates="transport")
+
+class PriceReference(Base):
+    __tablename__ = "price_reference"
+
+    id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
+    mode = Column(Enum(TransportMode), nullable=False)
+    origin_city = Column(String(255), nullable=False)
+    destination_city = Column(String(255), nullable=False)
+    estimated_price = Column(Float, nullable=False)
+    updated_at = Column(DateTime, default=datetime.utcnow, onupdate=datetime.utcnow)

@@ -2,13 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, places, plans
-
-# Skema database sekarang dikelola lewat Alembic migrations (folder migrations/),
-# bukan lagi Base.metadata.create_all() -- supaya perubahan schema di production
-# (nambah/ubah kolom, dst) bisa di-track & di-apply dengan aman tanpa risiko
-# create_all "lupa" nge-alter tabel yang sudah ada. Jalankan `alembic upgrade head`
-# sebelum start server (lihat README bagian "Menjalankan di lokal").
+from app.routers import auth, places, plans, trips
 
 app = FastAPI(
     title="My Itineraries API",
@@ -27,6 +21,7 @@ app.add_middleware(
 app.include_router(auth.router)
 app.include_router(places.router)
 app.include_router(plans.router)
+app.include_router(trips.router)
 
 
 @app.get("/")
