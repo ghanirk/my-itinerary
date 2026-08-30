@@ -23,6 +23,7 @@ from sqlalchemy.orm import sessionmaker
 from app.database import Base
 from app.main import app
 from app.database import get_db
+from app.rate_limit import login_limiter, register_limiter
 
 TEST_DATABASE_URL = os.environ["DATABASE_URL"]
 
@@ -55,6 +56,22 @@ def _clean_tables():
     with engine.begin() as conn:
         for table in reversed(Base.metadata.sorted_tables):
             conn.execute(table.delete())
+
+
+@pytest.fixture(autouse=True)
+def _reset_rate_limiters():
+    """
+    login_limiter & register_limiter di app/rate_limit.py sengaja global (in-memory,
+    per-proses) supaya efektif membatasi request di production. Tapi karena semua test
+    jalan dalam satu proses pytest yang sama, tanpa reset ini limiter bisa "penuh" dari
+    test-test sebelumnya (banyak test lain login lewat fixture `auth_headers` dengan
+    email yang sama) dan bikin test lain gagal dengan 429 -- padahal tidak sedang
+    menguji rate limiting sama sekali. Reset sebelum tiap test supaya tiap test benar-benar
+    independen.
+    """
+    login_limiter._hits.clear()
+    register_limiter._hits.clear()
+    yield
 
 
 @pytest.fixture
