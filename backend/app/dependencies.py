@@ -58,12 +58,28 @@ def get_trip_editor(
         detail="Not authorized to edit this trip",
     )
 
-def get_current_admin(
+
+def get_trip_viewer(
+    trip_id: str,
     current_user: User = Depends(get_current_active_user),
-) -> User:
-    if not current_user.is_admin:
-        raise HTTPException(
-            status_code=status.HTTP_403_FORBIDDEN,
-            detail="Admin access required",
-        )
-    return current_user
+    db: Session = Depends(get_db),
+) -> Trip:
+    """
+    Dependency untuk mengecek apakah user boleh melihat trip (owner ATAU anggota apa pun).
+    Dipakai di banyak endpoint GET yang sebelumnya menduplikasi pengecekan ini manual.
+    """
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(status_code=404, detail="Trip not found")
+
+    if trip.owner_id == current_user.id:
+        return trip
+
+    member = db.query(TripMember).filter(
+        TripMember.trip_id == trip_id,
+        TripMember.user_id == current_user.id,
+    ).first()
+    if member:
+        return trip
+
+    raise HTTPException(status_code=status.HTTP_403_FORBIDDEN, detail="Not authorized")

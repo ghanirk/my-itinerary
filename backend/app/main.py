@@ -2,7 +2,19 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, places, plans, trips, admin
+from app.routers import (
+    auth,
+    places,
+    plans,
+    trips,
+    trip_members,
+    trip_vehicles,
+    trip_hotels,
+    trip_activities,
+    trip_budget,
+    trip_installments,
+    admin,
+)
 
 app = FastAPI(
     title="My Itineraries API",
@@ -22,6 +34,12 @@ app.include_router(auth.router)
 app.include_router(places.router)
 app.include_router(plans.router)
 app.include_router(trips.router)
+app.include_router(trip_members.router)
+app.include_router(trip_vehicles.router)
+app.include_router(trip_hotels.router)
+app.include_router(trip_activities.router)
+app.include_router(trip_budget.router)
+app.include_router(trip_installments.router)
 app.include_router(admin.router)
 
 

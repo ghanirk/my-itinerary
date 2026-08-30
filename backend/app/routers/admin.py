@@ -1,11 +1,13 @@
-from fastapi import APIRouter, Depends, HTTPException, status
-from sqlalchemy.orm import Session
+"""Tahap 7 -- admin price reference (referensi harga transport per rute)."""
 from typing import List
 
+from fastapi import APIRouter, Depends, HTTPException
+from sqlalchemy.orm import Session
+
 from app.database import get_db
-from app.models import PriceReference, TransportMode
+from app.models import PriceReference, User
 from app.schemas import PriceReferenceCreate, PriceReferenceUpdate, PriceReferenceOut
-from app.dependencies import get_current_admin  # kita buat di dependencies.py
+from app.dependencies import get_current_admin
 
 router = APIRouter(prefix="/admin", tags=["admin"])
 
@@ -13,18 +15,17 @@ router = APIRouter(prefix="/admin", tags=["admin"])
 @router.post("/price-references", response_model=PriceReferenceOut, status_code=201)
 def create_price_reference(
     data: PriceReferenceCreate,
-    admin: Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    # Cek apakah sudah ada data dengan mode, origin, destination yang sama
     existing = db.query(PriceReference).filter(
         PriceReference.mode == data.mode,
         PriceReference.origin_city == data.origin_city,
-        PriceReference.destination_city == data.destination_city
+        PriceReference.destination_city == data.destination_city,
     ).first()
     if existing:
         raise HTTPException(400, "Price reference already exists for this route and mode")
-    
+
     ref = PriceReference(
         mode=data.mode,
         origin_city=data.origin_city,
@@ -39,17 +40,16 @@ def create_price_reference(
 
 @router.get("/price-references", response_model=List[PriceReferenceOut])
 def list_price_references(
-    admin: Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
-    refs = db.query(PriceReference).order_by(PriceReference.mode, PriceReference.origin_city).all()
-    return refs
+    return db.query(PriceReference).order_by(PriceReference.mode, PriceReference.origin_city).all()
 
 
 @router.get("/price-references/{ref_id}", response_model=PriceReferenceOut)
 def get_price_reference(
     ref_id: str,
-    admin: Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     ref = db.query(PriceReference).filter(PriceReference.id == ref_id).first()
@@ -62,16 +62,16 @@ def get_price_reference(
 def update_price_reference(
     ref_id: str,
     data: PriceReferenceUpdate,
-    admin: Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     ref = db.query(PriceReference).filter(PriceReference.id == ref_id).first()
     if not ref:
         raise HTTPException(404, "Price reference not found")
-    
+
     if data.estimated_price is not None:
         ref.estimated_price = data.estimated_price
-    
+
     db.commit()
     db.refresh(ref)
     return ref
@@ -80,7 +80,7 @@ def update_price_reference(
 @router.delete("/price-references/{ref_id}", status_code=204)
 def delete_price_reference(
     ref_id: str,
-    admin: Depends(get_current_admin),
+    admin: User = Depends(get_current_admin),
     db: Session = Depends(get_db),
 ):
     ref = db.query(PriceReference).filter(PriceReference.id == ref_id).first()

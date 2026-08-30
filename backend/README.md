@@ -21,6 +21,58 @@ trip planner premium (Tier 2), upload foto ke object storage.
 - Fitur ini butuh `GEMINI_API_KEY` diisi di `.env` — ambil key gratis (tanpa kartu kredit) di [aistudio.google.com/apikey](https://aistudio.google.com/apikey). Tanpa key ini, endpoint akan mengembalikan error 422 yang jelas (bukan crash).
 - Kuota harian: default `MAX_IMPORTS_PER_DAY=20` per user (bisa diubah di `.env`, set `0` untuk menonaktifkan). Kalau limit terlampaui, endpoint balikin `429` dengan pesan yang jelas.
 
+## Struktur folder
+
+Struktur `app/` mengikuti pola yang sama dengan backend `undangan-digital`: model, schema, dan router
+masing-masing dipecah jadi satu file per domain/resource (bukan satu file raksasa), lalu di-re-export
+lewat `__init__.py` supaya `from app.models import X` / `from app.schemas import X` tetap ringkas dipakai.
+
+```
+app/
+├── main.py              # bootstrap FastAPI + daftar router
+├── config.py            # baca environment variables (.env)
+├── database.py          # engine, session, Base
+├── auth.py              # hashing password, JWT, get_current_user
+├── dependencies.py      # dependency otorisasi (get_trip_editor, get_trip_viewer, get_current_admin, dst)
+├── rate_limit.py         # rate limiter in-memory untuk login/register
+│
+├── models/              # satu file per tabel/domain
+│   ├── enums.py          # semua Enum + helper gen_uuid
+│   ├── user.py
+│   ├── place.py          # Place, PlaceReport, ImportLog
+│   ├── plan.py           # Plan, PlanItem
+│   ├── trip.py           # Trip, TripMember           (Tahap 2 & 3)
+│   ├── transport.py      # TripTransport, TripVehicleGroup/Member, PriceReference (Tahap 3 & 7)
+│   ├── hotel.py          # TripHotel                  (Tahap 4)
+│   ├── activity.py       # TripActivity               (Tahap 4)
+│   ├── budget.py         # TripBudgetSummary          (Tahap 5)
+│   └── installment.py    # TripInstallment            (Tahap 6)
+│
+├── schemas/              # Pydantic schema, strukturnya sejajar dengan models/
+│   └── ... (auth, place, plan, member, transport, hotel, activity, trip, budget, installment, admin)
+│
+├── routers/              # satu router per tahap pengembangan / domain
+│   ├── auth.py
+│   ├── places.py
+│   ├── plans.py
+│   ├── trips.py             # CRUD trip inti                         (Tahap 2)
+│   ├── trip_members.py      # anggota + transport non-mobil          (Tahap 3)
+│   ├── trip_vehicles.py     # kelompok kendaraan mobil pribadi       (Tahap 3)
+│   ├── trip_hotels.py       # hotel per trip                         (Tahap 4)
+│   ├── trip_activities.py   # aktivitas/itinerary per trip           (Tahap 4)
+│   ├── trip_budget.py       # kalkulasi & ringkasan budget           (Tahap 5)
+│   ├── trip_installments.py # cicilan per anggota                    (Tahap 6)
+│   └── admin.py             # price reference admin                  (Tahap 7)
+│
+└── services/             # logic non-HTTP (dipanggil dari routers/)
+    ├── ai_extract.py
+    ├── social_extractor.py
+    └── budget_calculator.py
+```
+
+Semua path/method endpoint **tidak berubah** dibanding versi sebelumnya — ini murni refactor struktur
+file, jadi frontend yang sudah ada tidak perlu penyesuaian apa pun.
+
 ## Menjalankan di lokal
 
 1. Install dependencies:
