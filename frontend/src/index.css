@@ -1,0 +1,26 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-heading: 'Fraunces', serif;
+  --font-body: 'Inter', sans-serif;
+
+  --color-brand-50: #f0f9f6;
+  --color-brand-100: #dcefe7;
+  --color-brand-400: #d9a441;
+  --color-brand-700: #0f5c4c;
+  --color-brand-800: #0a4237;
+  --color-ink: #1f2a27;
+  --color-muted: #6b7b76;
+}
+
+body {
+  font-family: var(--font-body);
+  color: var(--color-ink);
+  .no-scrollbar {
+    -ms-overflow-style: none; /* IE/Edge lama */
+    scrollbar-width: none; /* Firefox */
+  }
+  .no-scrollbar::-webkit-scrollbar {
+    display: none; /* Chrome/Safari/Edge baru */
+  }
+}
