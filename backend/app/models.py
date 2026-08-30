@@ -194,6 +194,7 @@ class TripVehicleGroup(Base):
 
     id = Column(UUID(as_uuid=False), primary_key=True, default=gen_uuid)
     trip_id = Column(UUID(as_uuid=False), ForeignKey("trips.id"), nullable=False)
+    total_cost = Column(Float, nullable=True)  # biaya total untuk kendaraan ini (bensin+tol)
     vehicle_label = Column(String(255), nullable=False)
     created_at = Column(DateTime, default=datetime.utcnow)
 

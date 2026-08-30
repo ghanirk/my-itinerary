@@ -2,7 +2,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.config import settings
-from app.routers import auth, places, plans, trips
+from app.routers import auth, places, plans, trips, admin
 
 app = FastAPI(
     title="My Itineraries API",
@@ -22,6 +22,7 @@ app.include_router(auth.router)
 app.include_router(places.router)
 app.include_router(plans.router)
 app.include_router(trips.router)
+app.include_router(admin.router)
 
 
 @app.get("/")

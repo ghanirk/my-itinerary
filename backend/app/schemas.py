@@ -304,6 +304,9 @@ class TripInstallmentPay(BaseModel):
 class TripInstallmentAdjust(BaseModel):
     new_months: int  # jumlah bulan baru
 
+class TripVehicleGroupUpdateCost(BaseModel):
+    total_cost: float
+
 # --- Price Reference (Admin) ---
 class PriceReferenceCreate(BaseModel):
     mode: TransportMode

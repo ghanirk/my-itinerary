@@ -4,9 +4,11 @@ from typing import List
 from datetime import datetime
 
 from app.database import get_db
+from app.services.budget_calculator import calculate_trip_budget
 from app.models import (
     User, Trip, TripStatus, TripMember, MemberRole, TransportMode,
-    TripTransport, TripHotel, TripActivity, Place, TripVehicleGroup
+    TripTransport, TripHotel, TripActivity, Place, TripVehicleGroup,
+    TripBudgetSummary, TripInstallment
 )
 from app.schemas import (
     TripCreate, TripUpdate, TripOut,
@@ -14,7 +16,7 @@ from app.schemas import (
     TripTransportCreate, TripTransportOut,
     TripVehicleGroupCreate, TripVehicleGroupOut,
     TripHotelCreate, TripHotelOut,
-    TripActivityCreate, TripActivityOut
+    TripActivityCreate, TripActivityOut, TripInstallmentOut, TripInstallmentPay, TripInstallmentAdjust
 )
 from app.dependencies import get_current_active_user, get_trip_editor
 
@@ -468,3 +470,294 @@ def list_vehicle_groups(
             "created_at": g.created_at
         })
     return result
+
+@router.put("/{trip_id}/vehicle-groups/{group_id}/cost", response_model=TripVehicleGroupOut)
+def update_vehicle_group_cost(
+    trip_id: str,
+    group_id: str,
+    data: TripVehicleGroupUpdateCost,
+    trip: Trip = Depends(get_trip_editor),
+    db: Session = Depends(get_db),
+):
+    group = db.query(TripVehicleGroup).filter(
+        TripVehicleGroup.id == group_id,
+        TripVehicleGroup.trip_id == trip_id
+    ).first()
+    if not group:
+        raise HTTPException(404, "Vehicle group not found")
+    group.total_cost = data.total_cost
+    db.commit()
+    db.refresh(group)
+    # Ambil member_ids untuk response
+    member_ids = [row[0] for row in db.execute(
+        "SELECT member_id FROM trip_vehicle_members WHERE group_id = :gid",
+        {"gid": group.id}
+    ).fetchall()]
+    return {
+        "id": group.id,
+        "trip_id": group.trip_id,
+        "vehicle_label": group.vehicle_label,
+        "member_ids": member_ids,
+        "total_cost": group.total_cost,
+        "created_at": group.created_at
+    }
+
+
+@router.post("/{trip_id}/calculate-budget", response_model=TripBudgetSummaryOut)
+def calculate_budget(
+    trip_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Cek akses: owner atau anggota
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        member = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id
+        ).first()
+        if not member:
+            raise HTTPException(403, "Not authorized")
+    
+    # Hitung budget
+    try:
+        result = calculate_trip_budget(trip_id, db)
+    except ValueError as e:
+        raise HTTPException(400, str(e))
+    
+    # Simpan ke summary (hapus yang lama jika ada)
+    db.query(TripBudgetSummary).filter(TripBudgetSummary.trip_id == trip_id).delete()
+    summary = TripBudgetSummary(
+        trip_id=trip_id,
+        total_cost=result["total_cost"],
+        cost_per_member=result["cost_per_member"],
+        details=json.dumps(result["details"])  # import json
+    )
+    db.add(summary)
+    db.commit()
+    db.refresh(summary)
+    return summary
+
+
+@router.get("/{trip_id}/budget", response_model=TripBudgetSummaryOut)
+def get_budget(
+    trip_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Cek akses
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        member = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id
+        ).first()
+        if not member:
+            raise HTTPException(403, "Not authorized")
+    
+    summary = db.query(TripBudgetSummary).filter(TripBudgetSummary.trip_id == trip_id).first()
+    if not summary:
+        raise HTTPException(404, "Budget not calculated yet")
+    return summary
+
+# ====================== INSTALLMENTS ======================
+
+@router.post("/{trip_id}/installments/generate", response_model=List[TripInstallmentOut])
+def generate_installments(
+    trip_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Otorisasi: owner atau admin
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        admin = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id,
+            TripMember.role == MemberRole.admin
+        ).first()
+        if not admin:
+            raise HTTPException(403, "Not authorized")
+    
+    # Ambil budget summary terbaru
+    summary = db.query(TripBudgetSummary).filter(TripBudgetSummary.trip_id == trip_id).order_by(
+        TripBudgetSummary.calculated_at.desc()
+    ).first()
+    if not summary:
+        raise HTTPException(400, "Budget not calculated yet")
+    
+    # Hitung jumlah bulan dari sekarang sampai departure_month_target
+    now = datetime.utcnow()
+    target = trip.departure_month_target
+    if target < now:
+        raise HTTPException(400, "Departure date is in the past")
+    months_diff = (target.year - now.year) * 12 + (target.month - now.month)
+    if months_diff <= 0:
+        months_diff = 1  # minimal 1 bulan untuk cicilan
+    
+    # Hapus instalment lama untuk trip ini (jika ada)
+    db.query(TripInstallment).filter(TripInstallment.trip_id == trip_id).delete()
+    
+    # Ambil semua anggota
+    members = db.query(TripMember).filter(TripMember.trip_id == trip_id).all()
+    if not members:
+        raise HTTPException(400, "Trip has no members")
+    
+    # Buat instalment per anggota per bulan
+    new_installments = []
+    for member in members:
+        # Hitung amount_due per bulan (dibagi rata ke semua anggota, lalu per bulan)
+        amount_due_per_month = summary.cost_per_member / months_diff
+        # Untuk menghindari pembulatan, kita bisa pakai Decimal atau bulatkan ke 2 desimal
+        amount_due_per_month = round(amount_due_per_month, 2)
+        for month_idx in range(1, months_diff + 1):
+            inst = TripInstallment(
+                trip_id=trip_id,
+                member_id=member.id,
+                month_index=month_idx,
+                amount_due=amount_due_per_month,
+                amount_paid=0.0,
+                paid_at=None,
+            )
+            db.add(inst)
+            new_installments.append(inst)
+    
+    db.commit()
+    # Refresh semua objek yang baru
+    for inst in new_installments:
+        db.refresh(inst)
+    return new_installments
+
+
+@router.get("/{trip_id}/installments", response_model=List[TripInstallmentOut])
+def list_installments(
+    trip_id: str,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Akses: owner atau anggota
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        member = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id
+        ).first()
+        if not member:
+            raise HTTPException(403, "Not authorized")
+    
+    installments = db.query(TripInstallment).filter(TripInstallment.trip_id == trip_id).all()
+    return installments
+
+
+@router.put("/{trip_id}/installments/{installment_id}/pay", response_model=TripInstallmentOut)
+def pay_installment(
+    trip_id: str,
+    installment_id: str,
+    data: TripInstallmentPay,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Otorisasi: owner atau admin
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        admin = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id,
+            TripMember.role == MemberRole.admin
+        ).first()
+        if not admin:
+            raise HTTPException(403, "Not authorized")
+    
+    installment = db.query(TripInstallment).filter(
+        TripInstallment.id == installment_id,
+        TripInstallment.trip_id == trip_id
+    ).first()
+    if not installment:
+        raise HTTPException(404, "Installment not found")
+    
+    # Update pembayaran
+    if data.amount_paid <= 0:
+        raise HTTPException(400, "Amount paid must be greater than 0")
+    # Pastikan tidak overpay
+    new_paid = installment.amount_paid + data.amount_paid
+    if new_paid > installment.amount_due:
+        raise HTTPException(400, f"Total paid cannot exceed amount due ({installment.amount_due})")
+    installment.amount_paid = new_paid
+    if new_paid >= installment.amount_due:
+        installment.paid_at = datetime.utcnow()
+    else:
+        installment.paid_at = None  # jika partial, tidak set paid_at
+    
+    db.commit()
+    db.refresh(installment)
+    return installment
+
+
+@router.post("/{trip_id}/installments/adjust", response_model=List[TripInstallmentOut])
+def adjust_installments(
+    trip_id: str,
+    data: TripInstallmentAdjust,
+    current_user: User = Depends(get_current_active_user),
+    db: Session = Depends(get_db),
+):
+    # Otorisasi: owner atau admin
+    trip = db.query(Trip).filter(Trip.id == trip_id).first()
+    if not trip:
+        raise HTTPException(404, "Trip not found")
+    if trip.owner_id != current_user.id:
+        admin = db.query(TripMember).filter(
+            TripMember.trip_id == trip_id,
+            TripMember.user_id == current_user.id,
+            TripMember.role == MemberRole.admin
+        ).first()
+        if not admin:
+            raise HTTPException(403, "Not authorized")
+    
+    # Ambil budget summary terbaru
+    summary = db.query(TripBudgetSummary).filter(TripBudgetSummary.trip_id == trip_id).order_by(
+        TripBudgetSummary.calculated_at.desc()
+    ).first()
+    if not summary:
+        raise HTTPException(400, "Budget not calculated yet")
+    
+    # Hapus instalment lama
+    db.query(TripInstallment).filter(TripInstallment.trip_id == trip_id).delete()
+    
+    # Buat ulang dengan jangka waktu baru
+    months_diff = data.new_months
+    if months_diff <= 0:
+        raise HTTPException(400, "Number of months must be positive")
+    
+    members = db.query(TripMember).filter(TripMember.trip_id == trip_id).all()
+    if not members:
+        raise HTTPException(400, "Trip has no members")
+    
+    new_installments = []
+    for member in members:
+        amount_due_per_month = round(summary.cost_per_member / months_diff, 2)
+        for month_idx in range(1, months_diff + 1):
+            inst = TripInstallment(
+                trip_id=trip_id,
+                member_id=member.id,
+                month_index=month_idx,
+                amount_due=amount_due_per_month,
+                amount_paid=0.0,
+                paid_at=None,
+            )
+            db.add(inst)
+            new_installments.append(inst)
+    
+    db.commit()
+    for inst in new_installments:
+        db.refresh(inst)
+    return new_installments
