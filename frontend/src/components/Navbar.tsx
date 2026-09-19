@@ -6,6 +6,7 @@ const navItems = [
   { to: "/", label: "Beranda" },
   { to: "/places", label: "Jelajahi Tempat" },
   { to: "/plans", label: "Plan Saya" },
+  { to: "/trips", label: "Trip Rombongan" },
 ];
 
 function Navbar() {

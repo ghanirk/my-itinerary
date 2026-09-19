@@ -5,6 +5,8 @@ import Beranda from "./pages/Beranda";
 import Places from "./pages/Places";
 import PlaceImport from "./pages/PlaceImport";
 import MyPlans from "./pages/MyPlans";
+import Trips from "./pages/Trips";
+import TripDetail from "./pages/TripDetail";
 import Login from "./pages/Login";
 import Register from "./pages/Register";
 import NotFound from "./pages/NotFound";
@@ -29,6 +31,22 @@ function App() {
             element={
               <ProtectedRoute>
                 <MyPlans />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trips"
+            element={
+              <ProtectedRoute>
+                <Trips />
+              </ProtectedRoute>
+            }
+          />
+          <Route
+            path="/trips/:tripId"
+            element={
+              <ProtectedRoute>
+                <TripDetail />
               </ProtectedRoute>
             }
           />
